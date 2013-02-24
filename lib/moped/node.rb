@@ -89,7 +89,7 @@ module Moped
     # @since 1.2.0
     def disconnect
       auth.clear
-      connection.disconnect
+      with_connection(&:disconnect)
     end
 
     # Is the node down?
@@ -482,22 +482,25 @@ module Moped
 
     def login(database, username, password)
       getnonce = Protocol::Command.new(database, getnonce: 1)
-      connection.write [getnonce]
-      result = connection.read.documents.first
-      raise Errors::OperationFailure.new(getnonce, result) unless result["ok"] == 1
-      authenticate = Protocol::Commands::Authenticate.new(database, username, password, result["nonce"])
-      connection.write [authenticate]
-      result = connection.read.documents.first
-      raise Errors::AuthenticationFailure.new(authenticate, result) unless result["ok"] == 1
+      with_connection do |connection|
+        connection.write([ getnonce ])
+        result = connection.read.documents.first
+        raise Errors::OperationFailure.new(getnonce, result) unless result["ok"] == 1
+        authenticate = Protocol::Commands::Authenticate.new(database, username, password, result["nonce"])
+        connection.write [authenticate]
+        result = connection.read.documents.first
+        raise Errors::AuthenticationFailure.new(authenticate, result) unless result["ok"] == 1
+      end
       auth[database] = [username, password]
     end
 
     def logout(database)
       command = Protocol::Command.new(database, logout: 1)
-      connection.write [command]
-      result = connection.read.documents.first
-      raise Errors::OperationFailure.new(command, result) unless result["ok"] == 1
-
+      with_connection do |connection|
+        connection.write [command]
+        result = connection.read.documents.first
+        raise Errors::OperationFailure.new(command, result) unless result["ok"] == 1
+      end
       auth.delete(database)
     end
 
@@ -505,12 +508,8 @@ module Moped
       @connection = nil
     end
 
-    def connection
-      @connection ||= Connection.new(ip_address, port, timeout, options)
-    end
-
     def connected?
-      connection.connected?
+      with_connection{ |conn| conn.connected? }
     end
 
     # Mark the node as down.
@@ -528,7 +527,7 @@ module Moped
     # Raises Moped::ConnectionError if the connection times out.
     # Raises Moped::ConnectionError if the server is unavailable.
     def connect
-      connection.connect
+      with_connection{ |conn| conn.connect }
       @down_at = nil
     end
 
@@ -549,12 +548,14 @@ module Moped
 
       logging(operations) do
         ensure_connected do
-          connection.write operations
-          replies = connection.receive_replies(operations)
+          with_connection do |connection|
+            connection.write operations
+            replies = connection.receive_replies(operations)
 
-          replies.zip(callbacks).map do |reply, callback|
-            callback ? callback[reply] : reply
-          end.last
+            replies.zip(callbacks).map do |reply, callback|
+              callback ? callback[reply] : reply
+            end.last
+          end
         end
       end
     ensure
@@ -597,6 +598,19 @@ module Moped
         end
       else
         true
+      end
+    end
+
+    def pool
+      ConnectionPool.global(timeout: timeout)
+    end
+
+    def with_connection
+      begin
+        connection = pool.checkout(Thread.current.object_id, resolved_address)
+        yield(connection)
+      ensure
+        pool.checkin(connection) if connection
       end
     end
 

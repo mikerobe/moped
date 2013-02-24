@@ -126,12 +126,13 @@ describe Moped::Node, replica_set: true do
     context "when the socket gets disconnected in the middle of a send" do
 
       before do
-        Moped::Node.__send__(:public, :connection)
       end
 
       it "reconnects the socket" do
-        node.connection.stub(:connected?).and_return(true)
-        node.connection.instance_variable_set(:@sock, nil)
+        Moped::Node.send(:public, :with_connection) do |connection|
+          connection.stub(:connected?).and_return(true)
+          connection.instance_variable_set(:@sock, nil)
+        end
         lambda do
           node.ensure_connected do
             node.command("admin", ping: 1)
@@ -147,6 +148,7 @@ describe Moped::Node, replica_set: true do
       end
 
       before do
+        node.stub(:connected?).and_return(false)
         node.stub(:connect).and_raise(potential_reconfiguration_error)
       end
 

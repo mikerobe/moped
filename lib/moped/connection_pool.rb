@@ -13,8 +13,11 @@ module Moped
   # @since 2.0.0
   class ConnectionPool
 
-    # The default maximum number of Connections is 5.
-    MAX_SIZE = 5
+    # The default maximum number of Connections is 10.
+    MAX_SIZE = 10
+
+    # Used for synchronizting the call to create the global pool.
+    MUTEX = Mutex.new
 
     # Check a Connection back into the ConnectionPool.
     #
@@ -48,8 +51,9 @@ module Moped
     # @return [ Moped::Connection ] The next Connection.
     #
     # @since 2.0.0
-    def checkout(thread_id, address, timeout = 0.25)
+    def checkout(thread_id, address, timeout = 0.50)
       mutex.synchronize do
+        cleanup_connections!
         connection = connections.get(address).get(thread_id)
         return connection if connection
         if saturated?
@@ -74,6 +78,7 @@ module Moped
       @mutex, @resource = Mutex.new, ConditionVariable.new
       @connections, @instantiated, @options = Connections.new, 0, options
     end
+    private_class_method :new
 
     # Get the maximum number of Connections that are allowed in the pool.
     #
@@ -85,6 +90,22 @@ module Moped
     # @since 2.0.0
     def max_size
       @max_size ||= @options[:max_size] || MAX_SIZE
+    end
+
+    # Reset the ConnectionPool back to its initial state, with no open
+    # Connections.
+    #
+    # @example Reset the ConnectionPool.
+    #   connection_pool.reset
+    #
+    # @return [ Integer ] zero.
+    #
+    # @since 2.0.0
+    def reset
+      mutex.synchronize do
+        connections.reset
+        @instantiated = 0
+      end
     end
 
     # Returns whether or not the maximum number of Connections in the pool been
@@ -122,6 +143,33 @@ module Moped
     # @since 2.0.0
     class MaxReached < RuntimeError; end
 
+    class << self
+
+      # Get the global ConnectionPool used by all threads.
+      #
+      # @example Get the global ConnectionPool.
+      #   Moped::ConnectionPool.global
+      #
+      # @param [ Hash ] options The ConnectionPool options.
+      #
+      # @option options [ Integer ] :max_size The maximum number of Connections.
+      #
+      # @return [ Moped::ConnectionPool ] The global ConnectionPool.
+      #
+      # @since 2.0.0
+      def global(options = {})
+        MUTEX.synchronize do
+          @global ||= new(options)
+        end
+      end
+
+      def terminate
+        MUTEX.synchronize do
+          @global = nil
+        end
+      end
+    end
+
     private
 
     # @!attribute connections
@@ -149,6 +197,10 @@ module Moped
     #   @return [ ConditionVariable ] The ConditionVariable for broadcasting.
     #   @since 2.0.0
     attr_reader :connections, :instantiated, :options, :mutex, :resource
+
+    def cleanup_connections!
+      connections.cleanup!(Thread.list.find_all{ |thread| thread.alive? })
+    end
 
     # Create a new instance of a Connection given the thread instance id and
     # the address to connect to.
@@ -202,6 +254,12 @@ module Moped
     # @since 2.0.0
     class Connections
 
+      def cleanup!(active_threads)
+        pinnings.values.each do |pinning|
+          pinning.cleanup!(active_threads)
+        end
+      end
+
       # Get the Pinning for the provided address.
       #
       # @example Get the Pinning.
@@ -226,6 +284,21 @@ module Moped
       # @since 2.0.0
       def initialize(pinnings = {})
         @pinnings = pinnings
+      end
+
+      # Reset the Connections back to initial state.
+      #
+      # @example Reset the Connections.
+      #   connections.reset
+      #
+      # @return [ Array ] An empty array.
+      #
+      # @since 2.0.0
+      def reset
+        pinnings.values.each do |pinning|
+          pinning.reset
+        end
+        pinnings.clear
       end
 
       # Unpin all Connections for the provided thread id.
@@ -258,6 +331,12 @@ module Moped
       # @since 2.0.0
       class Pinning
 
+        def cleanup!(active_threads)
+          (threads.keys - active_threads).each do |thread_id|
+            unpin(thread_id)
+          end
+        end
+
         # Get a Connection for the provided thread id. If none is available,
         # then we take an instantiated unpinned Connection.
         #
@@ -283,6 +362,22 @@ module Moped
         # @since 2.0.0
         def initialize(threads = {}, unpinned = [])
           @threads, @unpinned = threads, unpinned
+        end
+
+        # Reset the Pinning back to initial state, and disconnect all active
+        # Connections.
+        #
+        # @example Reset the Pinning.
+        #   pinning.reset
+        #
+        # @return [ Array ] An empty array.
+        #
+        # @since 2.0.0
+        def reset
+          (threads.values + unpinned).each do |connection|
+            connection.disconnect
+          end
+          threads.clear and unpinned.clear
         end
 
         # Set a Connection in the Pinning.
@@ -311,8 +406,10 @@ module Moped
         # @since 2.0.0
         def unpin(thread_id)
           connection = threads.delete(thread_id)
-          connection.unpin
-          unpinned.push(connection)
+          if connection
+            connection.unpin
+            unpinned.push(connection)
+          end
         end
 
         private

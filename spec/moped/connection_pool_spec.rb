@@ -2,11 +2,19 @@ require "spec_helper"
 
 describe Moped::ConnectionPool do
 
-  describe "#checkin" do
+  let(:pool) do
+    described_class.global(max_size: 10, timeout: 5)
+  end
 
-    let(:pool) do
-      described_class.new
-    end
+  after do
+    pool.reset
+  end
+
+  after(:all) do
+    described_class.terminate
+  end
+
+  describe "#checkin" do
 
     let(:thread_id) do
       Thread.current.object_id
@@ -40,12 +48,8 @@ describe Moped::ConnectionPool do
 
   describe "#checkout" do
 
-    let(:pool) do
-      described_class.new(max_size: 2)
-    end
-
     let(:connection) do
-      Moped::Connection.new("127.0.0.1", 27017, nil)
+      Moped::Connection.new("127.0.0.1", 27017, 5)
     end
 
     context "when the pool has no available connections" do
@@ -78,7 +82,7 @@ describe Moped::ConnectionPool do
         context "when no connection is checked in while waiting" do
 
           before do
-            2.times { pool.checkout(thread_id, connection.address) }
+            10.times { pool.checkout(thread_id, connection.address) }
           end
 
           it "raises an error" do
@@ -155,32 +159,13 @@ describe Moped::ConnectionPool do
 
     context "when the option is provided" do
 
-      let(:pool) do
-        described_class.new(max_size: 10)
-      end
-
       it "returns the option" do
         expect(pool.max_size).to eq(10)
-      end
-    end
-
-    context "when the option was not provided" do
-
-      let(:pool) do
-        described_class.new
-      end
-
-      it "returns the default of 5" do
-        expect(pool.max_size).to eq(5)
       end
     end
   end
 
   describe "#saturated?" do
-
-    let(:pool) do
-      described_class.new(max_size: 2)
-    end
 
     let(:thread_id) do
       Thread.current.object_id
@@ -204,7 +189,7 @@ describe Moped::ConnectionPool do
     context "when the pool is equal to the max size" do
 
       before do
-        2.times { pool.checkout(thread_id, address) }
+        10.times { pool.checkout(thread_id, address) }
       end
 
       it "returns true" do
@@ -214,10 +199,6 @@ describe Moped::ConnectionPool do
   end
 
   describe "#unpin_connections" do
-
-    let(:pool) do
-      described_class.new
-    end
 
     let(:thread_id) do
       Thread.current.object_id
