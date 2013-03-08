@@ -9,19 +9,23 @@ module Moped
 
       attr_reader :socket
 
-      # Initialize the new TCPSocket with SSL.
+      # Initialize the new socket with SSL.
       #
       # @example Initialize the socket.
-      #   SSL.new("127.0.0.1", 27017)
+      #   address = Address.new("127.0.0.1", 27017)
+      #   SSL.new(address)
       #
-      # @param [ String ] host The host.
-      # @param [ Integer ] port The port.
+      # @param [ Address ] address The address to connect to.
       #
       # @since 1.2.0
-      def initialize(host, port)
-        @host, @port = host, port
+      def initialize(address)
+        @address = address
         handle_socket_errors do
-          @socket = TCPSocket.new(host, port)
+          if address.unix?
+            @socket = UNIXSocket.new(address.unix)
+          else
+            @socket = TCPSocket.new(address.host, address.port)
+          end
           super(socket)
           self.sync_close = true
           connect

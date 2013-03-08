@@ -2,6 +2,7 @@ require "timeout"
 require "moped/sockets/connectable"
 require "moped/sockets/tcp"
 require "moped/sockets/ssl"
+require "moped/sockets/unix"
 
 module Moped
 
@@ -10,7 +11,7 @@ module Moped
   # @api private
   class Connection
 
-    attr_reader :host, :port, :timeout, :options
+    attr_reader :address, :timeout, :options
 
     # Is the connection alive?
     #
@@ -24,19 +25,21 @@ module Moped
       connected? ? @sock.alive? : false
     end
 
-    # Connect to the server defined by @host, @port without timeout @timeout.
+    # Connect to the server defined by @address without timeout @timeout.
     #
     # @example Open the connection
     #   connection.connect
     #
-    # @return [ TCPSocket ] The socket.
+    # @return [ BasicSocket ] The socket.
     #
     # @since 1.0.0
     def connect
       @sock = if !!options[:ssl]
-        Sockets::SSL.connect(host, port, timeout)
+        Sockets::SSL.connect(address, timeout)
+      elsif address.unix?
+        Sockets::UNIX.connect(address, timeout)
       else
-        Sockets::TCP.connect(host, port, timeout)
+        Sockets::TCP.connect(address, timeout)
       end
     end
 
@@ -70,19 +73,18 @@ module Moped
     # Initialize the connection.
     #
     # @example Initialize the connection.
-    #   Connection.new("localhost", 27017, 5)
+    #   Connection.new(address, 5)
     #
-    # @param [ String ] host The host to connect to.
-    # @param [ Integer ] post The server port.
+    # @param [ Address ] address The address to connect to.
     # @param [ Integer ] timeout The connection timeout.
     # @param [ Hash ] options Options for the connection.
     #
     # @option options [ Boolean ] :ssl Connect using SSL
     # @since 1.0.0
-    def initialize(host, port, timeout, options = {})
+    def initialize(address, timeout, options = {})
       @sock = nil
       @request_id = 0
-      @host, @port, @timeout, @options = host, port, timeout, options
+      @address, @timeout, @options = address, timeout, options
     end
 
     # Read from the connection.

@@ -7,8 +7,7 @@ describe Moped::Sockets::Connectable do
     let(:object) do
       Class.new do
         include Moped::Sockets::Connectable
-        def host; "127.0.0.1"; end
-        def port; 27017; end
+        def address; "127.0.0.1:27017" end
       end.new
     end
 

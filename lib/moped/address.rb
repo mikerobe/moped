@@ -16,7 +16,9 @@ module Moped
     #   @return [ Integer ] The port.
     # @!attribute resolved
     #   @return [ String ] The full resolved address.
-    attr_reader :host, :ip, :original, :port, :resolved
+    # @!attribute unix
+    #   @return [ String ] The unix socket path, if applicable
+    attr_reader :host, :ip, :original, :port, :resolved, :unix
 
     # Instantiate the new address.
     #
@@ -28,8 +30,12 @@ module Moped
     # @since 2.0.0
     def initialize(address)
       @original = address
-      @host, port = address.split(":")
-      @port = (port || 27017).to_i
+      if File.socket? address or /^\// === address
+        @unix = address
+      else
+        @host, port = address.split(":")
+        @port = (port || 27017).to_i
+      end
     end
 
     # Resolve the address for the provided node. If the address cannot be
@@ -45,12 +51,44 @@ module Moped
     # @since 2.0.0
     def resolve(node)
       begin
-        @ip ||= Socket.getaddrinfo(host, nil, Socket::AF_INET, Socket::SOCK_STREAM).first[3]
-        @resolved ||= "#{ip}:#{port}"
+        if unix?
+          @ip ||= '127.0.0.1'
+          @resolved ||= unix
+        else
+          @ip ||= Socket.getaddrinfo(host, nil, Socket::AF_INET, Socket::SOCK_STREAM).first[3]
+          @resolved ||= "#{ip}:#{port}"
+        end
       rescue SocketError => e
         node.instrument(Node::WARN, prefix: "  MOPED:", message: "Could not resolve IP for: #{original}")
         node.down! and false
       end
     end
+
+    # Get the string representation of the address. If it has been resolved,
+    # returns the resolved address, otherwise the original address specified in
+    # the constructor.
+    #
+    # @example Get the string representation.
+    #   address.to_s
+    #
+    # @return [ String ] The string representation.
+    def to_s
+      resolved || original
+    end
+
+    # Returns true if this address refers to a unix domain socket, rather than
+    # a TCP socket. Unix domain sockets are identified as paths on the local
+    # file system, rather than with a host and port.
+    #
+    # @example Check if the address is unix
+    #   if address.unix?
+    #     ...
+    #   end
+    #
+    # @return [ true, false ] True if this addresses a unix domain socket
+    def unix?
+      not unix.nil?
+    end
+
   end
 end

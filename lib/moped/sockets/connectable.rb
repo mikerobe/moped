@@ -2,7 +2,7 @@ module Moped
   module Sockets
     module Connectable
 
-      attr_reader :host, :port
+      attr_reader :address
 
       # Is the socket connection alive?
       #
@@ -94,7 +94,7 @@ module Moped
       #
       # @since 1.4.0
       def generate_message(error)
-        "#{host}:#{port}: #{error.class.name} (#{error.errno}): #{error.message}"
+        "#{address}: #{error.class.name} (#{error.errno}): #{error.message}"
       end
 
       # Handle the potential socket errors that can occur.
@@ -127,9 +127,9 @@ module Moped
       rescue Errno::ETIMEDOUT => e
         raise Errors::ConnectionFailure, generate_message(e)
       rescue IOError
-        raise Errors::ConnectionFailure, "Connection timed out to Mongo on #{host}:#{port}"
+        raise Errors::ConnectionFailure, "Connection timed out to Mongo on #{address}"
       rescue OpenSSL::SSL::SSLError => e
-        raise Errors::ConnectionFailure, "SSL Error '#{e.to_s}' for connection to Mongo on #{host}:#{port}"
+        raise Errors::ConnectionFailure, "SSL Error '#{e.to_s}' for connection to Mongo on #{address}"
       end
 
       module ClassMethods
@@ -137,28 +137,30 @@ module Moped
         # Connect to the tcp server.
         #
         # @example Connect to the server.
-        #   TCPSocket.connect("127.0.0.1", 27017, 30)
+        #   address = Address.new("127.0.0.1", 27017)
+        #   TCPSocket.connect(address, 30)
         #
-        # @param [ String ] host The host to connect to.
-        # @param [ Integer ] post The server port.
+        # @param [ Address ] address The address to connect to.
         # @param [ Integer ] timeout The connection timeout.
         #
-        # @return [ TCPSocket ] The socket.
+        # @return [ BasicSocket ] The socket.
         #
         # @since 1.0.0
-        def connect(host, port, timeout)
+        def connect(address, timeout)
           begin
             Timeout::timeout(timeout) do
-              sock = new(host, port)
-              sock.set_encoding('binary')
-              timeout_val = [ timeout, 0 ].pack("l_2")
-              sock.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1)
-              sock.setsockopt(Socket::SOL_SOCKET, Socket::SO_RCVTIMEO, timeout_val)
-              sock.setsockopt(Socket::SOL_SOCKET, Socket::SO_SNDTIMEO, timeout_val)
+              sock = new(address)
+              if not address.unix?
+                sock.set_encoding('binary')
+                timeout_val = [ timeout, 0 ].pack("l_2")
+                sock.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1)
+                sock.setsockopt(Socket::SOL_SOCKET, Socket::SO_RCVTIMEO, timeout_val)
+                sock.setsockopt(Socket::SOL_SOCKET, Socket::SO_SNDTIMEO, timeout_val)
+              end
               sock
             end
           rescue Timeout::Error
-            raise Errors::ConnectionFailure, "Timed out connection to Mongo on #{host}:#{port}"
+            raise Errors::ConnectionFailure, "Timed out connection to Mongo on #{address}"
           end
         end
       end

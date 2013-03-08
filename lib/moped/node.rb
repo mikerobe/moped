@@ -137,7 +137,7 @@ module Moped
     #
     # @since 2.0.0
     def connection
-      @connection ||= Connection.new(address.ip, address.port, timeout, options)
+      @connection ||= Connection.new(address, timeout, options)
     end
 
     # Force the node to disconnect from the server.
